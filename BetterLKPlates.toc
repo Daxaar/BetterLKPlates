@@ -1,0 +1,6 @@
+## Interface: 30300
+## Title: BetterLKPlates
+## Notes: Target-only overlays for native Wrath nameplates
+## Version: 0.1
+## SavedVariables: BetterLKPlatesDB
+BetterLKPlates.lua
