@@ -5,13 +5,13 @@ overlay:SetHeight(1)
 overlay:Hide()
 
 local config, attached, castStart, castEnd, channel
-local preview, previewPoints, samplePlate, sampleBuff, sampleDebuff
+local preview, previewPoints, samplePlate, sampleBuff, sampleDebuff, sampleHealth
 local dirty, elapsed = true, 0
 local plates, points, auras, timers, expires = {}, {}, {}, {}, {}
 local positions = {
-    {"combo", "Combo points", 0, 20},
-    {"buff", "Buffs", 0, 31},
-    {"debuff", "Debuffs", 0, 52},
+    {"combo", "Combo points", 0, 17},
+    {"buff", "Buffs (right edge)", 28, 0},
+    {"debuff", "Debuffs", 0, 30},
     {"cast", "Cast bar", 0, -28},
 }
 local count, total = -1, 40
@@ -96,6 +96,14 @@ local function updateCombo()
 end
 
 local function placeAura(icon, anchor, key, index, count)
+    if key == "buff" then
+        icon:ClearAllPoints()
+        icon:SetWidth(config.buffSize)
+        icon:SetHeight(config.buffSize)
+        icon:SetPoint("LEFT", anchor, "RIGHT",
+            config.buffX + index * (config.buffSize + config.spacing), config.buffY)
+        return
+    end
     local step = config.size + config.spacing
     local row = math.floor(index / 10)
     local columns = math.min(10, count - row * 10)
@@ -134,7 +142,7 @@ local function updateAuras()
             end
         end
         for i = first, slot - 1 do
-            placeAura(auras[i], overlay, row == 1 and "buff" or "debuff", i - first, slot - first)
+            placeAura(auras[i], row == 1 and plates[attached].health or overlay, row == 1 and "buff" or "debuff", i - first, slot - first)
         end
     end
     for i = slot, total do
@@ -194,7 +202,6 @@ end
 
 local function match()
     local target = UnitName("target")
-    if not target then return end
     local children = WorldFrame:GetNumChildren()
     if children ~= count then
         count = children
@@ -203,7 +210,7 @@ local function match()
     local candidate, opaque, names = nil, 0, 0
     for frame, plate in pairs(plates) do
         if frame:IsVisible() then
-            local same = plate.name:GetText() == target
+            local same = target and plate.name:GetText() == target
             if same then names = names + 1 end
             if frame:GetAlpha() >= 0.99 then
                 opaque = opaque + 1
@@ -272,7 +279,7 @@ local function refreshVisuals()
     end
     preview:ClearAllPoints()
     preview:SetPoint("BOTTOM", samplePlate, "CENTER", config.comboX, config.comboY)
-    placeAura(sampleBuff, samplePlate, "buff", 0, 1)
+    placeAura(sampleBuff, sampleHealth, "buff", 0, 1)
     placeAura(sampleDebuff, samplePlate, "debuff", 0, 1)
     if attached then
         updateCombo()
@@ -289,10 +296,12 @@ local function setupOptions()
     title:SetText(panel.name)
     local help = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
     help:SetPoint("TOPLEFT", 16, -42)
-    help:SetText("Offsets in pixels from the top centre of the native health bar. Positive Y moves up.")
+    help:SetText("Offsets and aura size adjustments are relative to the baseline. Positive Y moves up.")
 
-    local controls = {}
-    local function field(key, label, x, y, low, high)
+    local controls, displayValue = {}, {}
+    local function field(key, label, x, y, low, high, baseline, factor)
+        baseline, factor = baseline or 0, factor or 1
+        displayValue[key] = function() return tostring((config[key] - baseline) / factor) end
         local caption = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
         caption:SetPoint("TOPLEFT", x, y)
         caption:SetText(label)
@@ -303,14 +312,15 @@ local function setupOptions()
         box:SetMaxLetters(5)
         box:SetPoint("TOPLEFT", caption, "BOTTOMLEFT", 4, -3)
         local function save(self)
-            config[key] = number(self:GetText(), config[key], low, high)
-            self:SetText(tostring(config[key]))
+            local value = tonumber(self:GetText())
+            if value then config[key] = number(value * factor + baseline, config[key], low, high) end
+            self:SetText(displayValue[key]())
             refreshVisuals()
         end
         box:SetScript("OnEditFocusLost", save)
         box:SetScript("OnEnterPressed", box.ClearFocus)
         box:SetScript("OnEscapePressed", function(self)
-            self:SetText(tostring(config[key]))
+            self:SetText(displayValue[key]())
             self:ClearFocus()
         end)
         controls[key] = box
@@ -319,11 +329,14 @@ local function setupOptions()
     for i, position in ipairs(positions) do
         local key, label = position[1], position[2]
         local y = -73 - (i - 1) * 48
-        field(key .. "X", label .. " X", 16, y, -200, 200)
-        field(key .. "Y", label .. " Y", 180, y, -200, 200)
+        field(key .. "X", label .. " X", 16, y, -200, 200, position[3])
+        field(key .. "Y", label .. " Y", 180, y, -200, 200, position[4])
     end
-    field("size", "Aura icon size", 16, -265, 8, 32)
+    field("size", "Debuff size adjustment", 16, -265, 8, 32, 28)
     field("spacing", "Aura icon spacing", 180, -265, 0, 12)
+
+    field("buffSize", "Buff size adjustment", 16, -311, 8, 32, 20)
+
 
     local checks = {}
     local function checkbox(key, label, y)
@@ -338,11 +351,11 @@ local function setupOptions()
         end)
         checks[key] = check
     end
-    checkbox("mine", "Show only my debuffs", -312)
-    checkbox("cast", "Show addon cast bar", -344)
+    checkbox("mine", "Show only my debuffs", -350)
+    checkbox("cast", "Show addon cast bar", -380)
 
-    field("comboScale", "Combo point scale (%)", 16, -383, 50, 300)
-    field("inactiveOpacity", "Inactive point opacity (%)", 180, -383, 0, 100)
+    field("comboScale", "Combo point scale (%)", 16, -414, 50, 300, 0, 2)
+    field("inactiveOpacity", "Inactive point opacity (%)", 180, -414, 0, 100)
     local sampleLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal")
     sampleLabel:SetPoint("TOP", panel, "TOP", 155, -95)
     sampleLabel:SetText("Nameplate layout preview")
@@ -352,6 +365,7 @@ local function setupOptions()
     samplePlate:SetHeight(1)
     samplePlate:SetPoint("TOP", sampleLabel, "BOTTOM", 0, -150)
     local bar = samplePlate:CreateTexture(nil, "ARTWORK")
+    sampleHealth = bar
     bar:SetTexture(0.2, 0.65, 0.24)
     bar:SetWidth(110)
     bar:SetHeight(9)
@@ -376,8 +390,8 @@ local function setupOptions()
             local key = position[1]
             if key == "buff" or key == "debuff" then
                 config[key .. "X"], config[key .. "Y"] = position[3], position[4]
-                controls[key .. "X"]:SetText(tostring(position[3]))
-                controls[key .. "Y"]:SetText(tostring(position[4]))
+                controls[key .. "X"]:SetText(displayValue[key .. "X"]())
+                controls[key .. "Y"]:SetText(displayValue[key .. "Y"]())
             end
         end
         refreshVisuals()
@@ -387,7 +401,7 @@ local function setupOptions()
     refreshVisuals()
 
     panel:SetScript("OnShow", function()
-        for key, box in pairs(controls) do box:SetText(tostring(config[key])) end
+        for key, box in pairs(controls) do box:SetText(displayValue[key]()) end
         for key, check in pairs(checks) do check:SetChecked(config[key]) end
     end)
     InterfaceOptions_AddCategory(panel)
@@ -398,12 +412,17 @@ addon:SetScript("OnEvent", function(_, event, unit)
     if event == "PLAYER_LOGIN" then
         config = type(BetterLKPlatesDB) == "table" and BetterLKPlatesDB or {}
         BetterLKPlatesDB = config
-        config.size = number(config.size, 16, 8, 32)
+        config.size = number(config.size, 28, 8, 32)
+        config.buffSize = number(config.buffSize, 20, 8, 32)
+        if not config.buffRightAnchor then
+            config.buffX, config.buffY = 28, 0
+            config.buffRightAnchor = true
+        end
         config.spacing = number(config.spacing, 3, 0, 12)
-        config.inactiveOpacity = number(config.inactiveOpacity, 10, 0, 100)
-        config.comboScale = number(config.comboScale, 100, 50, 300)
+        config.inactiveOpacity = number(config.inactiveOpacity, 50, 0, 100)
+        config.comboScale = number(config.comboScale, 200, 50, 300)
         config.cast = config.cast == true
-        config.mine = config.mine == true
+        config.mine = config.mine ~= false
         for _, name in ipairs({
             "PLAYER_TARGET_CHANGED", "PLAYER_ENTERING_WORLD", "UNIT_AURA", "UNIT_COMBO_POINTS",
             "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_FAILED",
